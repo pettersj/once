@@ -13,6 +13,11 @@ type InstallRegistrySubmitMsg struct {
 type InstallRegistryBackMsg struct{}
 type InstallRegistrySkipMsg struct{ ImageRef string }
 
+const (
+	registryFormUsernameField = iota
+	registryFormPasswordField
+)
+
 type InstallRegistryForm struct {
 	form     Form
 	imageRef string
@@ -31,11 +36,24 @@ func NewInstallRegistryForm(imageRef string) InstallRegistryForm {
 	}
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
-		username := f.TextField(0).Value()
-		password := f.TextField(1).Value()
+		username := f.TextField(registryFormUsernameField).Value()
+		password := f.TextField(registryFormPasswordField).Value()
 
 		if username == "" && password == "" {
 			return func() tea.Msg { return InstallRegistrySkipMsg{ImageRef: imageRef} }
+		}
+
+		if username == "" {
+			f.errorField = registryFormUsernameField
+			f.error = "Username is required when password is set"
+			f.focused = registryFormUsernameField
+			return nil
+		}
+		if password == "" {
+			f.errorField = registryFormPasswordField
+			f.error = "Password is required when username is set"
+			f.focused = registryFormPasswordField
+			return nil
 		}
 
 		return func() tea.Msg {

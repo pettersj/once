@@ -34,9 +34,25 @@ func NewSettingsFormRegistry(settings docker.ApplicationSettings) SettingsFormRe
 	}
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
+		username := f.TextField(registryUsernameField).Value()
+		password := f.TextField(registryPasswordField).Value()
+
+		if username != "" && password == "" {
+			f.errorField = registryPasswordField
+			f.error = "Password is required when username is set"
+			f.focused = registryPasswordField
+			return nil
+		}
+		if username == "" && password != "" {
+			f.errorField = registryUsernameField
+			f.error = "Username is required when password is set"
+			f.focused = registryUsernameField
+			return nil
+		}
+
 		s := settings
-		s.Registry.Username = f.TextField(registryUsernameField).Value()
-		s.Registry.Password = f.TextField(registryPasswordField).Value()
+		s.Registry.Username = username
+		s.Registry.Password = password
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {

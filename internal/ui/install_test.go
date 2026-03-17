@@ -35,12 +35,38 @@ func TestInstall_CustomImageFlow(t *testing.T) {
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
 	assert.Equal(t, installStateImageForm, m.state)
 
-	// Submit image
+	// Submit image -> goes to registry form
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	assert.Equal(t, installStateRegistryForm, m.state)
+
+	// Skip registry -> goes to hostname
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	assert.Equal(t, installStateHostname, m.state)
 
 	// Submit hostname
 	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest", Hostname: "app.example.com"})
+	assert.Equal(t, installStateActivity, m.state)
+}
+
+func TestInstall_CustomImageFlowWithRegistry(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/org/app:latest"})
+	assert.Equal(t, installStateRegistryForm, m.state)
+
+	// Submit registry credentials
+	m, _ = updateInstall(m, InstallRegistrySubmitMsg{
+		ImageRef: "ghcr.io/org/app:latest",
+		Registry: docker.RegistrySettings{Username: "user", Password: "token"},
+	})
+	assert.Equal(t, installStateHostname, m.state)
+	assert.Equal(t, "user", m.registry.Username)
+	assert.Equal(t, "token", m.registry.Password)
+
+	// Submit hostname
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/org/app:latest", Hostname: "app.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 }
 
@@ -142,12 +168,23 @@ func TestInstall_BackNavigation_HostnameEscGoesToAppList(t *testing.T) {
 	assert.Equal(t, installStateAppList, m.state)
 }
 
-func TestInstall_BackNavigation_HostnameEscGoesToImageForm(t *testing.T) {
+func TestInstall_BackNavigation_HostnameEscGoesToRegistryForm(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	assert.Equal(t, installStateHostname, m.state)
 	assert.True(t, m.customImage)
+
+	m, _ = updateInstall(m, keyPressMsg("esc"))
+	assert.Equal(t, installStateRegistryForm, m.state)
+}
+
+func TestInstall_BackNavigation_RegistryEscGoesToImageForm(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	assert.Equal(t, installStateRegistryForm, m.state)
 
 	m, _ = updateInstall(m, keyPressMsg("esc"))
 	assert.Equal(t, installStateImageForm, m.state)
@@ -165,8 +202,18 @@ func TestInstall_BackNavigation_HostnameBackMsgCustomImage(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 
 	m, _ = updateInstall(m, InstallHostnameBackMsg{})
+	assert.Equal(t, installStateRegistryForm, m.state)
+}
+
+func TestInstall_BackNavigation_RegistryBackMsgGoesToImageForm(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+
+	m, _ = updateInstall(m, InstallRegistryBackMsg{})
 	assert.Equal(t, installStateImageForm, m.state)
 }
 
@@ -219,17 +266,18 @@ func TestInstall_ShowsTitleAndHidesLogoWhenAppsExist(t *testing.T) {
 	assert.Contains(t, view, "ONCE · install")
 }
 
-func TestInstall_PullFailureReturnsToImageForm(t *testing.T) {
+func TestInstall_PullFailureReturnsToRegistryForm(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "bad:image"})
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "bad:image"})
 	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "bad:image", Hostname: "app.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 
 	pullErr := fmt.Errorf("%w: %w", docker.ErrDeployFailed, docker.ErrPullFailed)
 	m, _ = updateInstall(m, InstallActivityFailedMsg{Err: pullErr})
-	assert.Equal(t, installStateImageForm, m.state)
+	assert.Equal(t, installStateRegistryForm, m.state)
 	assert.Equal(t, pullErr, m.err)
 }
 
@@ -301,8 +349,14 @@ func TestInstall_HelpKeyShownOnHostnameScreen(t *testing.T) {
 	view = ansi.Strip(m.View())
 	assert.NotContains(t, view, "F1")
 
-	// Hostname: F1 shown
+	// Registry form: F1 shown (has help text)
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	view = ansi.Strip(m.View())
+	assert.Contains(t, view, "F1")
+	assert.Contains(t, view, "help")
+
+	// Hostname: F1 shown
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	view = ansi.Strip(m.View())
 	assert.Contains(t, view, "F1")
 	assert.Contains(t, view, "help")
@@ -313,9 +367,10 @@ func TestInstall_HelpKeyShownOnHostnameScreenNonFirstRun(t *testing.T) {
 	m := NewInstall(ns, "")
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	// Navigate to hostname screen
+	// Navigate to hostname screen via registry form
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
 	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallRegistrySkipMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 
 	view := ansi.Strip(m.View())
 	assert.Contains(t, view, "F1")

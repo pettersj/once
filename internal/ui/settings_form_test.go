@@ -378,6 +378,122 @@ func TestSettingsFormBackups_Submit(t *testing.T) {
 	assert.True(t, submitMsg.Settings.Backup.AutoBackup)
 }
 
+func TestSettingsFormRegistry_InitialState_Empty(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{})
+
+	assert.Equal(t, 0, form.form.Focused())
+	assert.Equal(t, "", form.form.TextField(registryUsernameField).Value())
+	assert.Equal(t, "", form.form.TextField(registryPasswordField).Value())
+}
+
+func TestSettingsFormRegistry_InitialState_WithCredentials(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Registry: docker.RegistrySettings{
+			Username: "myuser",
+			Password: "mytoken",
+		},
+	}
+	form := NewSettingsFormRegistry(settings)
+
+	assert.Equal(t, "myuser", form.form.TextField(registryUsernameField).Value())
+	assert.Equal(t, "mytoken", form.form.TextField(registryPasswordField).Value())
+}
+
+func TestSettingsFormRegistry_TabNavigation(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{})
+	assert.Equal(t, 0, form.form.Focused())
+
+	registryPressTab(&form)
+	assert.Equal(t, 1, form.form.Focused(), "password")
+
+	registryPressTab(&form)
+	assert.Equal(t, 2, form.form.Focused(), "done button")
+
+	registryPressTab(&form)
+	assert.Equal(t, 3, form.form.Focused(), "cancel button")
+
+	registryPressTab(&form)
+	assert.Equal(t, 0, form.form.Focused(), "wraps to username")
+}
+
+func TestSettingsFormRegistry_Submit_WithBothFields(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{Name: "myapp"})
+
+	registryTypeText(&form, "myuser")
+	registryPressTab(&form)
+	registryTypeText(&form, "mytoken")
+	registryPressTab(&form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormRegistry)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	submitMsg, ok := msg.(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	assert.Equal(t, "myapp", submitMsg.Settings.Name)
+	assert.Equal(t, "myuser", submitMsg.Settings.Registry.Username)
+	assert.Equal(t, "mytoken", submitMsg.Settings.Registry.Password)
+}
+
+func TestSettingsFormRegistry_Submit_Empty(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{Name: "myapp"})
+
+	registryPressTab(&form)
+	registryPressTab(&form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormRegistry)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	submitMsg, ok := msg.(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	assert.Equal(t, "", submitMsg.Settings.Registry.Username)
+	assert.Equal(t, "", submitMsg.Settings.Registry.Password)
+}
+
+func TestSettingsFormRegistry_Submit_UsernameOnly_ShowsError(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{})
+
+	registryTypeText(&form, "myuser")
+	registryPressTab(&form)
+	registryPressTab(&form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormRegistry)
+	assert.Nil(t, cmd)
+	assert.True(t, form.form.HasError())
+	assert.Equal(t, "Password is required when username is set", form.form.Error())
+}
+
+func TestSettingsFormRegistry_Submit_PasswordOnly_ShowsError(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{})
+
+	registryPressTab(&form)
+	registryTypeText(&form, "mytoken")
+	registryPressTab(&form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormRegistry)
+	assert.Nil(t, cmd)
+	assert.True(t, form.form.HasError())
+	assert.Equal(t, "Username is required when password is set", form.form.Error())
+}
+
+func TestSettingsFormRegistry_Cancel(t *testing.T) {
+	form := NewSettingsFormRegistry(docker.ApplicationSettings{})
+
+	for range 3 {
+		registryPressTab(&form)
+	}
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormRegistry)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(SettingsSectionCancelMsg)
+	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
+}
+
 // Helpers
 
 func updateSettingsForm[T any](form *T, msg tea.Msg) {
@@ -613,4 +729,14 @@ func environmentTypeText(form *SettingsFormEnvironment, text string) {
 
 func environmentSendWindowSize(form *SettingsFormEnvironment, w, h int) {
 	updateSettingsForm(form, tea.WindowSizeMsg{Width: w, Height: h})
+}
+
+func registryPressTab(form *SettingsFormRegistry) {
+	updateSettingsForm(form, keyPressMsg("tab"))
+}
+
+func registryTypeText(form *SettingsFormRegistry, text string) {
+	for _, r := range text {
+		updateSettingsForm(form, keyPressMsg(string(r)))
+	}
 }

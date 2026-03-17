@@ -11,8 +11,10 @@ import (
 )
 
 type deployCommand struct {
-	cmd  *cobra.Command
-	host string
+	cmd              *cobra.Command
+	host             string
+	registryUsername string
+	registryPassword string
 }
 
 func newDeployCommand() *deployCommand {
@@ -24,6 +26,8 @@ func newDeployCommand() *deployCommand {
 		RunE:  WithNamespace(d.run),
 	}
 	d.cmd.Flags().StringVar(&d.host, "host", "", "hostname for the application (defaults to <name>.localhost)")
+	d.cmd.Flags().StringVar(&d.registryUsername, "registry-username", "", "username for private registry authentication")
+	d.cmd.Flags().StringVar(&d.registryPassword, "registry-password", "", "password or token for private registry authentication")
 	return d
 }
 
@@ -56,6 +60,10 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 		Image:      imageRef,
 		Host:       host,
 		AutoUpdate: true,
+		Registry: docker.RegistrySettings{
+			Username: d.registryUsername,
+			Password: d.registryPassword,
+		},
 	})
 
 	progress := func(p docker.DeployProgress) {

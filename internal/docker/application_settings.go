@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strconv"
+
+	"github.com/distribution/reference"
 )
 
 type SMTPSettings struct {
@@ -36,6 +39,42 @@ type BackupSettings struct {
 	AutoBackup bool   `json:"autoBackup,omitempty"`
 }
 
+type RegistrySettings struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+func (r RegistrySettings) IsSet() bool {
+	return r.Username != "" && r.Password != ""
+}
+
+func (r RegistrySettings) EncodedAuth(imageRef string) string {
+	if !r.IsSet() {
+		return ""
+	}
+
+	serverAddress := "https://index.docker.io/v1/"
+	if named, err := reference.ParseNormalizedNamed(imageRef); err == nil {
+		domain := reference.Domain(named)
+		if domain != "" && domain != "docker.io" {
+			serverAddress = "https://" + domain
+		}
+	}
+
+	authConfig := struct {
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		ServerAddress string `json:"serveraddress"`
+	}{
+		Username:      r.Username,
+		Password:      r.Password,
+		ServerAddress: serverAddress,
+	}
+
+	data, _ := json.Marshal(authConfig)
+	return base64.URLEncoding.EncodeToString(data)
+}
+
 type ApplicationSettings struct {
 	Name       string             `json:"name"`
 	Image      string             `json:"image"`
@@ -46,6 +85,7 @@ type ApplicationSettings struct {
 	Resources  ContainerResources `json:"resources"`
 	AutoUpdate bool               `json:"autoUpdate"`
 	Backup     BackupSettings     `json:"backup"`
+	Registry   RegistrySettings   `json:"registry,omitempty"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -77,6 +117,9 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 		return false
 	}
 	if s.Backup != other.Backup {
+		return false
+	}
+	if s.Registry != other.Registry {
 		return false
 	}
 	if len(s.EnvVars) != len(other.EnvVars) {

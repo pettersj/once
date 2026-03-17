@@ -23,15 +23,17 @@ var installKeys = struct {
 type installState int
 
 const (
-	installStateAppList   installState = iota // Screen 1: choose app
-	installStateImageForm                     // Screen 2: enter image ref
-	installStateHostname                      // Screen 3: enter hostname
-	installStateActivity                      // Installing
+	installStateAppList      installState = iota // Screen 1: choose app
+	installStateImageForm                        // Screen 2: enter image ref
+	installStateRegistryForm                     // Screen 3: enter registry credentials (optional)
+	installStateHostname                         // Screen 4: enter hostname
+	installStateActivity                         // Installing
 )
 
 type InstallFormSubmitMsg struct {
 	ImageRef string
 	Hostname string
+	Registry docker.RegistrySettings
 }
 
 type Install struct {
@@ -41,6 +43,7 @@ type Install struct {
 	state         installState
 	appList       InstallAppList
 	imageForm     InstallImageForm
+	registryForm  InstallRegistryForm
 	hostnameForm  InstallHostnameForm
 	activity      *InstallActivity
 	popupHelp     *PopupHelp
@@ -50,6 +53,7 @@ type Install struct {
 	cliMode       bool
 	customImage   bool
 	installFlag   string
+	registry      docker.RegistrySettings
 }
 
 func NewInstall(ns *docker.Namespace, imageRef string) Install {
@@ -175,22 +179,38 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, m.initScreenWithSize()
 
 	case InstallImageSubmitMsg:
-		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
+		m.registryForm = NewInstallRegistryForm(msg.ImageRef)
 		m.customImage = true
-		m.state = installStateHostname
+		m.state = installStateRegistryForm
 		return m, m.initScreenWithSize()
 
 	case InstallImageBackMsg:
 		m.state = installStateAppList
 		return m, nil
 
+	case InstallRegistrySubmitMsg:
+		m.registry = msg.Registry
+		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
+		m.state = installStateHostname
+		return m, m.initScreenWithSize()
+
+	case InstallRegistrySkipMsg:
+		m.registry = docker.RegistrySettings{}
+		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
+		m.state = installStateHostname
+		return m, m.initScreenWithSize()
+
+	case InstallRegistryBackMsg:
+		m.state = installStateImageForm
+		return m, m.imageForm.Init()
+
 	case InstallHostnameBackMsg:
 		if m.cliMode {
 			return m, m.cancelFromScreen()
 		}
 		if m.customImage {
-			m.state = installStateImageForm
-			return m, m.imageForm.Init()
+			m.state = installStateRegistryForm
+			return m, m.registryForm.Init()
 		}
 		m.state = installStateAppList
 		return m, nil
@@ -200,8 +220,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
 		}
+		msg.Registry = m.registry
 		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname)
+		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, msg.Registry)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.activity.Init()
 
@@ -273,6 +294,8 @@ func (m Install) initCurrentScreen() tea.Cmd {
 		return m.appList.Init()
 	case installStateImageForm:
 		return m.imageForm.Init()
+	case installStateRegistryForm:
+		return m.registryForm.Init()
 	case installStateHostname:
 		return m.hostnameForm.Init()
 	}
@@ -297,6 +320,10 @@ func (m *Install) updateCurrentScreen(msg tea.Msg) tea.Cmd {
 		var cmd tea.Cmd
 		m.imageForm, cmd = m.imageForm.Update(msg)
 		return cmd
+	case installStateRegistryForm:
+		var cmd tea.Cmd
+		m.registryForm, cmd = m.registryForm.Update(msg)
+		return cmd
 	case installStateHostname:
 		var cmd tea.Cmd
 		m.hostnameForm, cmd = m.hostnameForm.Update(msg)
@@ -311,6 +338,8 @@ func (m Install) viewCurrentScreen() string {
 		return m.appList.View()
 	case installStateImageForm:
 		return m.imageForm.View()
+	case installStateRegistryForm:
+		return m.registryForm.View()
 	case installStateHostname:
 		return m.hostnameForm.View()
 	}
@@ -324,13 +353,16 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 	case installStateImageForm:
 		m.state = installStateAppList
 		return m, nil
+	case installStateRegistryForm:
+		m.state = installStateImageForm
+		return m, m.imageForm.Init()
 	case installStateHostname:
 		if m.cliMode {
 			return m, m.cancelFromScreen()
 		}
 		if m.customImage {
-			m.state = installStateImageForm
-			return m, m.imageForm.Init()
+			m.state = installStateRegistryForm
+			return m, m.registryForm.Init()
 		}
 		m.state = installStateAppList
 		return m, nil
@@ -340,7 +372,7 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 
 func (m Install) imageErrorState() installState {
 	if m.customImage {
-		return installStateImageForm
+		return installStateRegistryForm
 	}
 	return installStateAppList
 }
@@ -470,6 +502,8 @@ func (m *Install) updateHelpBindings() {
 
 func (m Install) helpForState() (string, string) {
 	switch m.state {
+	case installStateRegistryForm:
+		return "Registry credentials", installRegistryHelpText
 	case installStateHostname:
 		return "Setting the hostname", installHostnameHelpText
 	}
@@ -477,6 +511,17 @@ func (m Install) helpForState() (string, string) {
 }
 
 const (
+	installRegistryHelpText = `If your image is hosted in a private registry, enter your credentials here.
+
+For Docker Hub, use your Docker Hub username and a personal access token.
+
+For GitHub Container Registry (ghcr.io), use your GitHub username and a personal access token with the read:packages scope.
+
+For other registries, use the credentials provided by your registry.
+
+If the image is public, you can leave both fields empty and submit to skip this step.
+`
+
 	installHostnameHelpText = `On this screen should enter the hostname where you'll be running this application.
 
 If you're installing an application on the Internet, this should use a domain name that you own. You can use a subdomain so that one domain can support multiple applications.

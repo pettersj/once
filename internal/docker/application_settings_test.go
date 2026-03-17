@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,6 +155,77 @@ func TestEnvVarsEqualDiffers(t *testing.T) {
 
 	none := ApplicationSettings{Name: "app"}
 	assert.False(t, base.Equal(none))
+}
+
+func TestRegistrySettingsIsSet(t *testing.T) {
+	assert.False(t, RegistrySettings{}.IsSet())
+	assert.False(t, RegistrySettings{Username: "user"}.IsSet())
+	assert.False(t, RegistrySettings{Password: "pass"}.IsSet())
+	assert.True(t, RegistrySettings{Username: "user", Password: "pass"}.IsSet())
+}
+
+func TestRegistrySettingsEncodedAuthDockerHub(t *testing.T) {
+	reg := RegistrySettings{Username: "myuser", Password: "mytoken"}
+	auth := reg.EncodedAuth("myuser/myapp:latest")
+	require.NotEmpty(t, auth)
+
+	decoded, err := base64.URLEncoding.DecodeString(auth)
+	require.NoError(t, err)
+
+	var config struct {
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		ServerAddress string `json:"serveraddress"`
+	}
+	require.NoError(t, json.Unmarshal(decoded, &config))
+	assert.Equal(t, "myuser", config.Username)
+	assert.Equal(t, "mytoken", config.Password)
+	assert.Equal(t, "https://index.docker.io/v1/", config.ServerAddress)
+}
+
+func TestRegistrySettingsEncodedAuthGHCR(t *testing.T) {
+	reg := RegistrySettings{Username: "myuser", Password: "ghp_token"}
+	auth := reg.EncodedAuth("ghcr.io/myorg/myapp:latest")
+	require.NotEmpty(t, auth)
+
+	decoded, err := base64.URLEncoding.DecodeString(auth)
+	require.NoError(t, err)
+
+	var config struct {
+		ServerAddress string `json:"serveraddress"`
+	}
+	require.NoError(t, json.Unmarshal(decoded, &config))
+	assert.Equal(t, "https://ghcr.io", config.ServerAddress)
+}
+
+func TestRegistrySettingsEncodedAuthEmpty(t *testing.T) {
+	assert.Empty(t, RegistrySettings{}.EncodedAuth("myuser/myapp:latest"))
+}
+
+func TestRegistrySettingsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:  "app",
+		Image: "ghcr.io/org/img:latest",
+		Registry: RegistrySettings{
+			Username: "user",
+			Password: "token123",
+		},
+	}
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+	assert.Equal(t, "user", restored.Registry.Username)
+	assert.Equal(t, "token123", restored.Registry.Password)
+	assert.True(t, original.Equal(restored))
+}
+
+func TestRegistrySettingsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "app", Registry: RegistrySettings{Username: "user", Password: "pass"}}
+
+	differentUser := ApplicationSettings{Name: "app", Registry: RegistrySettings{Username: "other", Password: "pass"}}
+	assert.False(t, base.Equal(differentUser))
+
+	noRegistry := ApplicationSettings{Name: "app"}
+	assert.False(t, base.Equal(noRegistry))
 }
 
 func TestAutoUpdateAndBackupMarshalRoundTrip(t *testing.T) {

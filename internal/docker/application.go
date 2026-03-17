@@ -26,7 +26,7 @@ var (
 	ErrSetupFailed        = errors.New("setup failed")
 	ErrPullFailed = &describedError{
 		msg:         "pull failed",
-		description: "Failed to download the application image. Check that the image name is correct and try again.",
+		description: "Failed to download the application image. Check that the image name is correct. If this is a private image, verify your registry credentials.",
 	}
 	ErrDeployFailed = errors.New("deploy failed")
 	ErrVerificationFailed = &describedError{
@@ -274,7 +274,12 @@ func (a *Application) saveOperationResult(ctx context.Context, record func(*Stat
 }
 
 func (a *Application) pullImage(ctx context.Context, progress DeployProgressCallback) (bool, error) {
-	reader, err := a.namespace.client.ImagePull(ctx, a.Settings.Image, image.PullOptions{})
+	pullOpts := image.PullOptions{}
+	if auth := a.Settings.Registry.EncodedAuth(a.Settings.Image); auth != "" {
+		pullOpts.RegistryAuth = auth
+	}
+
+	reader, err := a.namespace.client.ImagePull(ctx, a.Settings.Image, pullOpts)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrPullFailed, err)
 	}
